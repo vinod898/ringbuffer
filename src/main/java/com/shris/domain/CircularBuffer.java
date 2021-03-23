@@ -4,76 +4,178 @@ public class CircularBuffer<E> {
 
 	private static final int DEFAULT_CAPACITY = 8;
 
-	private final int capacity;
-	private final E[] data;
-	private volatile int writeSequence, readSequence;
+	public E[] elements = null;
+	public int capacity = 0;
+	public boolean flipped = false;
+	private volatile int writePos, readPos;
 
 	@SuppressWarnings("unchecked")
 	public CircularBuffer(int capacity) {
 		this.capacity = (capacity < 1) ? DEFAULT_CAPACITY : capacity;
-		this.data = (E[]) new Object[this.capacity];
-		this.readSequence = 0;
-		this.writeSequence = -1;
+		this.elements = (E[]) new Object[this.capacity];
+		this.writePos = 0;
+		this.readPos = 0;
 
 	}
 
-	public E[] getData() {
-		return data;
+	public void reset() {
+		this.writePos = 0;
+		this.readPos = 0;
+		this.flipped = false;
 	}
 
-	public boolean offer(E element) {
-
-		if (isNotFull()) {
-
-			int nextWriteSeq = writeSequence + 1;
-			data[nextWriteSeq % capacity] = element;
-			writeSequence++;
-			return true;
+	public int available() {
+		if (!flipped) {
+			return writePos - readPos;
 		}
-
-		return false;
+		return capacity - readPos + writePos;
 	}
 
-	public E[] poll() {
-		if (isNotEmpty()) {
-			int start = readSequence, end = writeSequence;
-			E[] values = (E[]) new Object[end - start + 1];
-			for (int i = start; i <= end; i++) {
-				values[i - start] = data[i];
+	public int remainingCapacity() {
+		if (!flipped) {
+			return capacity - writePos;
+		}
+		return readPos - writePos;
+	}
+
+	public boolean put(E element) {
+		if (!flipped) {
+			if (writePos == capacity) {
+				writePos = 0;
+				flipped = true;
+
+				if (writePos < readPos) {
+					elements[writePos++] = element;
+					return true;
+				} else {
+					return false;
+				}
+			} else {
+				elements[writePos++] = element;
+				return true;
 			}
-			readSequence = end + 1;
-			return values;
+		} else {
+			if (writePos < readPos) {
+				elements[writePos++] = element;
+				return true;
+			} else {
+				return false;
+			}
 		}
-
-		return null;
 	}
 
-	public int capacity() {
-		return capacity;
+	public int put(E[] newElements, int length) {
+		int newElementsReadPos = 0;
+		if (!flipped) {
+			// readPos lower than writePos - free sections are:
+			// 1) from writePos to capacity
+			// 2) from 0 to readPos
+
+			if (length <= capacity - writePos) {
+				// new elements fit into top of elements array - copy directly
+				for (; newElementsReadPos < length; newElementsReadPos++) {
+					this.elements[this.writePos++] = newElements[newElementsReadPos];
+				}
+
+				return newElementsReadPos;
+			} else {
+				// new elements must be divided between top and bottom of elements array
+
+				// writing to top
+				for (; this.writePos < capacity; this.writePos++) {
+					this.elements[this.writePos] = newElements[newElementsReadPos++];
+				}
+
+				// writing to bottom
+				this.writePos = 0;
+				this.flipped = true;
+				int endPos = Math.min(this.readPos, length - newElementsReadPos);
+				for (; this.writePos < endPos; this.writePos++) {
+					this.elements[writePos] = newElements[newElementsReadPos++];
+				}
+
+				return newElementsReadPos;
+			}
+
+		} else {
+			// readPos higher than writePos - free sections are:
+			// 1) from writePos to readPos
+
+			int endPos = Math.min(this.readPos, this.writePos + length);
+
+			for (; this.writePos < endPos; this.writePos++) {
+				this.elements[this.writePos] = newElements[newElementsReadPos++];
+			}
+
+			return newElementsReadPos;
+		}
 	}
 
-	public int size() {
+	public E take() {
+		if (!flipped) {
+			if (readPos < writePos) {
+				return elements[readPos++];
+			} else {
+				return null;
+			}
+		} else {
+			if (readPos == capacity) {
+				readPos = 0;
+				flipped = false;
 
-		return (writeSequence - readSequence) + 1;
+				if (readPos < writePos) {
+					return elements[readPos++];
+				} else {
+					return null;
+				}
+			} else {
+				return elements[readPos++];
+			}
+		}
 	}
 
-	public boolean isEmpty() {
+	public int take(E[] into, int length) {
+		int intoWritePos = 0;
+		if (!flipped) {
+			// writePos higher than readPos - available section is writePos - readPos
 
-		return writeSequence < readSequence;
+			int endPos = Math.min(this.writePos, this.readPos + length);
+			for (; this.readPos < endPos; this.readPos++) {
+				into[intoWritePos++] = this.elements[this.readPos];
+			}
+			return intoWritePos;
+		} else {
+			// readPos higher than writePos - available sections are
+			// top + bottom of elements array
+
+			if (length <= capacity - readPos) {
+				// length is lower than the elements available at the top
+				// of the elements array - copy directly
+				for (; intoWritePos < length; intoWritePos++) {
+					into[intoWritePos] = this.elements[this.readPos++];
+				}
+
+				return intoWritePos;
+			} else {
+				// length is higher than elements available at the top of the elements array
+				// split copy into a copy from both top and bottom of elements array.
+
+				// copy from top
+				for (; this.readPos < capacity; this.readPos++) {
+					into[intoWritePos++] = this.elements[this.readPos];
+				}
+
+				// copy from bottom
+				this.readPos = 0;
+				this.flipped = false;
+				int endPos = Math.min(this.writePos, length - intoWritePos);
+				for (; this.readPos < endPos; this.readPos++) {
+					into[intoWritePos++] = this.elements[this.readPos];
+				}
+
+				return intoWritePos;
+			}
+		}
 	}
 
-	public boolean isFull() {
-
-		return size() >= capacity;
-	}
-
-	private boolean isNotEmpty() {
-
-		return !isEmpty();
-	}
-
-	private boolean isNotFull() {
-
-		return !isFull();
-	}
 }

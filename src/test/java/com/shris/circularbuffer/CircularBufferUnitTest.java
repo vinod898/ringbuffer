@@ -5,15 +5,13 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-
 import org.junit.Test;
-
 import com.shris.domain.CircularBuffer;
 
 public class CircularBufferUnitTest {
 
-	final static int totalArrayLength = 10000000;
-	final static int bufferSize = 10000;
+	final static int batchSize = 10;
+	final static int bufferSize = 100;
 	final static String[] alphabets = { "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
 			"q", "r", "s", "t", "u", "v", "w", "x", "y", "z" };
 
@@ -34,12 +32,13 @@ public class CircularBufferUnitTest {
 	@Test
 	public void producerConsumerTest() throws Exception {
 		CircularBuffer<String> buffer = new CircularBuffer<String>(bufferSize);
-		String[] list = new String[totalArrayLength];
+		String[] list = new String[batchSize];
 		ExecutorService executorService = Executors.newFixedThreadPool(2);
-		executorService.submit(new Producer<String>(buffer));
+		Future<?> producerList = executorService.submit(new Producer<String>(buffer));
 		Future<String> consumedList = executorService.submit(new Consumer<String>(buffer, list));
 		String consumedStatus = consumedList.get();
-		System.out.println("Success");
+		// producerList.get();
+		System.out.println("Success" + consumedStatus);
 	}
 
 	static class Producer<T> implements Runnable {
@@ -58,10 +57,9 @@ public class CircularBufferUnitTest {
 					if (index >= alphabets.length)
 						index = 0;
 					String ch = alphabets[index];
-					if (buffer.offer((T) ch)) {
-						// System.out.println("Produced: " + ch);
-						Thread.sleep(100);
-					}
+					if (!buffer.put((T) ch))
+						break;
+					Thread.sleep(500);
 					index++;
 
 				}
@@ -86,17 +84,15 @@ public class CircularBufferUnitTest {
 		@Override
 		public String call() throws Exception {
 			try {
-				for (;;) {
-					Thread.sleep(1000);
-					T[] ch = buffer.poll();
-					if (ch != null && ch.length > 0) {
-						for (T t : ch) {
-							System.out.print(((String) t).toUpperCase());
+				while (true) {
+					Thread.sleep(2000);
 
-						}
-						System.out.println();
-
+					int consumedElements = buffer.take(this.list, batchSize);
+					for (int i = 0; i < consumedElements; i++) {
+						System.out.print(this.list[i]);
 					}
+					System.out.println();
+
 				}
 
 			} catch (Exception e) {
